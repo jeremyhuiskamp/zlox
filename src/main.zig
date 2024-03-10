@@ -1,5 +1,6 @@
 const std = @import("std");
 const chunk = @import("./chunk.zig");
+const debug = @import("./debug.zig");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -13,5 +14,5 @@ pub fn main() !void {
     try c.writeConstantOffset(constant, 123);
     try c.writeOpCode(chunk.OpCode.OP_RETURN, 123);
 
-    c.disassemble("test chunk");
+    debug.disassemble(c, "test chunk");
 }
