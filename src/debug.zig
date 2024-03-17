@@ -1,6 +1,8 @@
 const std = @import("std");
 const c = @import("./chunk.zig");
 
+pub const TRACE_EXECUTION = true;
+
 pub fn disassemble(chunk: c.Chunk, name: []const u8) void {
     std.debug.print("== {s} ==\n", .{name});
 
@@ -10,7 +12,7 @@ pub fn disassemble(chunk: c.Chunk, name: []const u8) void {
     }
 }
 
-fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
+pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
     std.debug.print("{d:0>4} ", .{offset});
     if (offset > 0 and chunk.lines.items[offset] == chunk.lines.items[offset - 1]) {
         std.debug.print("   | ", .{});
@@ -24,8 +26,15 @@ fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
     };
 
     return switch (op) {
-        c.OpCode.OP_RETURN => simpleInstruction(op, offset),
-        c.OpCode.OP_CONSTANT => constantInstruction(chunk, op, offset),
+        c.OpCode.CONSTANT => constantInstruction(chunk, op, offset),
+        // zig fmt: off
+        c.OpCode.RETURN,
+        c.OpCode.NEGATE,
+        c.OpCode.ADD,
+        c.OpCode.SUBTRACT,
+        c.OpCode.MULTIPLY,
+        c.OpCode.DIVIDE => simpleInstruction(op, offset),
+        // zig fmt: on
     };
 }
 
@@ -42,7 +51,7 @@ fn constantInstruction(chunk: c.Chunk, op: c.OpCode, offset: usize) usize {
     });
 
     // TODO: crack out to `printValue` per book?
-    std.debug.print("{d}", .{chunk.values.items[constantOffset]});
+    std.debug.print("{d}", .{chunk.constants.items[constantOffset]});
 
     std.debug.print("'\n", .{});
     return offset + 2;
@@ -51,7 +60,7 @@ fn constantInstruction(chunk: c.Chunk, op: c.OpCode, offset: usize) usize {
 test "disassemble" {
     var chunk = c.Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try chunk.writeOpCode(c.OpCode.OP_RETURN, 123);
+    try chunk.writeOpCode(c.OpCode.RETURN, 123);
     // Confusingly, printing from the test seems to partially label
     // the outcome as failure, and then again later as success...
     // But the code is untestable except via visually scanning the

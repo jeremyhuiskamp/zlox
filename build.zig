@@ -74,6 +74,8 @@ pub fn build(b: *std.Build) void {
     const files_to_test = [_][]const u8{
         "src/chunk.zig",
         "src/debug.zig",
+        "src/vm.zig",
+        "src/stack.zig",
     };
     for (files_to_test) |file_to_test| {
         const lib_unit_tests = b.addTest(.{
