@@ -30,16 +30,6 @@ pub const VM = struct {
         self.stack.reset();
     }
 
-    fn push(self: *VM, value: c.Value) void {
-        self.stackTop.?.* = value;
-        self.stackTop = self.stackTop.?.add(1);
-    }
-
-    fn pop(self: *VM) c.Value {
-        self.stackTop = self.stackTop.?.sub(1);
-        return self.stackTop.?.*;
-    }
-
     pub fn interpret(self: *VM, chunk: *const c.Chunk) InterpretResult {
         self.chunk = chunk;
         self.ip = chunk.code.items.ptr;
@@ -48,10 +38,6 @@ pub const VM = struct {
 
     fn ipAsOffset(self: *VM) usize {
         return @intFromPtr(self.ip.?) - @intFromPtr(self.chunk.?.code.items.ptr);
-    }
-
-    fn stackOffset(self: *VM) usize {
-        return @intFromPtr(self.stackTop) - @intFromPtr(&self.stack);
     }
 
     fn run(self: *VM) InterpretResult {
@@ -65,43 +51,42 @@ pub const VM = struct {
                     self.ipAsOffset(),
                 );
             }
-            var instruction: c.OpCode = undefined;
-            instruction = @enumFromInt(self.ip.?[0]);
+            const instruction: c.OpCode = @enumFromInt(self.ip.?[0]);
             self.ip.? += 1;
             switch (instruction) {
-                c.OpCode.RETURN => {
+                .RETURN => {
                     // book pops and prints here, but I want to
                     // access the value, so we'll just pop from
                     // the caller...
                     return InterpretResult.OK;
                 },
-                c.OpCode.CONSTANT => {
+                .CONSTANT => {
                     const constant_offset = self.ip.?[0];
                     self.ip.? += 1;
                     const value = self.chunk.?.constants.items[constant_offset];
                     self.stack.push(value);
                 },
-                c.OpCode.NEGATE => {
+                .NEGATE => {
                     const p = self.stack.top - 1;
                     p[0] = -p[0];
                     // self.stack.push(-self.stack.pop());
                 },
-                c.OpCode.ADD => {
+                .ADD => {
                     const b = self.stack.pop();
                     const a = self.stack.pop();
                     self.stack.push(a + b);
                 },
-                c.OpCode.SUBTRACT => {
+                .SUBTRACT => {
                     const b = self.stack.pop();
                     const a = self.stack.pop();
                     self.stack.push(a - b);
                 },
-                c.OpCode.MULTIPLY => {
+                .MULTIPLY => {
                     const b = self.stack.pop();
                     const a = self.stack.pop();
                     self.stack.push(a * b);
                 },
-                c.OpCode.DIVIDE => {
+                .DIVIDE => {
                     const b = self.stack.pop();
                     const a = self.stack.pop();
                     self.stack.push(a / b);
@@ -114,127 +99,114 @@ pub const VM = struct {
     pub fn deinit(_: *VM) void {}
 };
 
-test "do an interpret" {
-    var chunk = c.Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
+// Helper to run a chunk of code in a VM.
+const VMTest = struct {
+    const Instruction = union(enum) {
+        value: c.Value,
+        op: c.OpCode,
+    };
 
-    var vm = VM.init();
-    vm.resetStack();
-    defer vm.deinit();
+    instructions: std.ArrayList(Instruction),
 
-    const constant_offset = try chunk.addConstant(5.3);
-    try chunk.writeOpCode(c.OpCode.CONSTANT, 1);
-    try chunk.writeConstantOffset(constant_offset, 1);
+    // Allocates with the test allocator for syntactic convenience.
+    // You must call `run()` to clean up later.
+    pub fn init() *VMTest {
+        var t = std.testing.allocator.create(VMTest) catch unreachable;
+        t.instructions = std.ArrayList(Instruction).init(std.testing.allocator);
+        return t;
+    }
 
-    try chunk.writeOpCode(c.OpCode.NEGATE, 2);
-    try chunk.writeOpCode(c.OpCode.RETURN, 3);
+    pub fn val(self: *VMTest, value: c.Value) *VMTest {
+        self.instructions.append(.{ .value = value }) catch unreachable;
+        return self;
+    }
 
-    std.debug.print("====\n", .{});
-    const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(InterpretResult.OK, result);
-    try std.testing.expectEqual(1, vm.stack.size());
-    try std.testing.expectEqual(-5.3, vm.stack.pop());
+    pub fn op(self: *VMTest, operation: c.OpCode) *VMTest {
+        self.instructions.append(.{ .op = operation }) catch unreachable;
+        return self;
+    }
+
+    // de-allocates and must be run exactly once!
+    pub fn run(self: *VMTest) !c.Value {
+        var vm = VM.init();
+        defer vm.deinit();
+        vm.resetStack();
+
+        var chunk: c.Chunk = c.Chunk.init(std.testing.allocator);
+        defer chunk.deinit();
+
+        _ = self.op(.RETURN);
+
+        for (self.instructions.items, 0..) |instruction, line| {
+            switch (instruction) {
+                .value => |value| try chunk.addNewConstant(value, line),
+                .op => |o| try chunk.writeOpCode(o, line),
+            }
+        }
+
+        self.instructions.deinit();
+        defer std.testing.allocator.destroy(self);
+
+        std.debug.print("\n====\n", .{});
+        const result = vm.interpret(&chunk);
+        try std.testing.expectEqual(InterpretResult.OK, result);
+        try std.testing.expectEqual(1, vm.stack.size());
+        return vm.stack.pop();
+    }
+};
+
+test "interpret negate" {
+    const r = VMTest.init()
+        .val(5.3)
+        .op(.NEGATE)
+        .run();
+    try std.testing.expectEqual(-5.3, r);
 }
 
 test "interpret add" {
-    var chunk = c.Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
-
-    var vm = VM.init();
-    vm.resetStack();
-    defer vm.deinit();
-
-    try chunk.addNewConstant(5.3, 1);
-    try chunk.addNewConstant(1.2, 2);
-    try chunk.writeOpCode(c.OpCode.ADD, 3);
-    try chunk.writeOpCode(c.OpCode.RETURN, 4);
-
-    std.debug.print("====\n", .{});
-    const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(InterpretResult.OK, result);
-    try std.testing.expectEqual(1, vm.stack.size());
-    try std.testing.expectEqual(6.5, vm.stack.pop());
+    const r = VMTest.init()
+        .val(5.3)
+        .val(1.2)
+        .op(.ADD)
+        .run();
+    try std.testing.expectEqual(6.5, r);
 }
 
 test "interpret subtract" {
-    var chunk = c.Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
-
-    var vm = VM.init();
-    vm.resetStack();
-    defer vm.deinit();
-
-    try chunk.addNewConstant(5.3, 1);
-    try chunk.addNewConstant(1.2, 2);
-    try chunk.writeOpCode(c.OpCode.SUBTRACT, 3);
-    try chunk.writeOpCode(c.OpCode.RETURN, 4);
-
-    std.debug.print("====\n", .{});
-    const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(InterpretResult.OK, result);
-    try std.testing.expectEqual(1, vm.stack.size());
-    try std.testing.expectEqual(4.1, vm.stack.pop());
+    const r = VMTest.init()
+        .val(5.3)
+        .val(1.2)
+        .op(.SUBTRACT)
+        .run();
+    try std.testing.expectEqual(4.1, r);
 }
 
 test "interpret multiply" {
-    var chunk = c.Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
-
-    var vm = VM.init();
-    vm.resetStack();
-    defer vm.deinit();
-
-    try chunk.addNewConstant(2.0, 1);
-    try chunk.addNewConstant(3.0, 2);
-    try chunk.writeOpCode(c.OpCode.MULTIPLY, 3);
-    try chunk.writeOpCode(c.OpCode.RETURN, 4);
-
-    std.debug.print("====\n", .{});
-    const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(InterpretResult.OK, result);
-    try std.testing.expectEqual(1, vm.stack.size());
-    try std.testing.expectEqual(6.0, vm.stack.pop());
+    const r = VMTest.init()
+        .val(2.0)
+        .val(3.0)
+        .op(.MULTIPLY)
+        .run();
+    try std.testing.expectEqual(6.0, r);
 }
 
 test "interpret divide" {
-    var chunk = c.Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
-
-    var vm = VM.init();
-    vm.resetStack();
-    defer vm.deinit();
-
-    try chunk.addNewConstant(6.0, 1);
-    try chunk.addNewConstant(3.0, 2);
-    try chunk.writeOpCode(c.OpCode.DIVIDE, 3);
-    try chunk.writeOpCode(c.OpCode.RETURN, 4);
-
-    std.debug.print("====\n", .{});
-    const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(InterpretResult.OK, result);
-    try std.testing.expectEqual(1, vm.stack.size());
-    try std.testing.expectEqual(2.0, vm.stack.pop());
+    const r = VMTest.init()
+        .val(6.0)
+        .val(3.0)
+        .op(.DIVIDE)
+        .run();
+    try std.testing.expectEqual(2.0, r);
 }
 
 test "interpret longer expression" {
-    var chunk = c.Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
-
-    var vm = VM.init();
-    vm.resetStack();
-    defer vm.deinit();
-
-    try chunk.addNewConstant(2.2, 1);
-    try chunk.addNewConstant(3.4, 2);
-    try chunk.writeOpCode(c.OpCode.ADD, 3);
-    try chunk.addNewConstant(5.6, 4);
-    try chunk.writeOpCode(c.OpCode.DIVIDE, 5);
-    try chunk.writeOpCode(c.OpCode.NEGATE, 6);
-    try chunk.writeOpCode(c.OpCode.RETURN, 7);
-
-    std.debug.print("====\n", .{});
-    const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(InterpretResult.OK, result);
-    try std.testing.expectEqual(1, vm.stack.size());
-    try std.testing.expectEqual(-1.0, vm.stack.pop());
+    const r = VMTest.init()
+        .val(2.2)
+        .val(3.4)
+        .op(.ADD)
+        .val(5.6)
+        .op(.DIVIDE)
+        .op(.NEGATE)
+        .run();
+    try std.testing.expectEqual(-1.0, r);
 }
