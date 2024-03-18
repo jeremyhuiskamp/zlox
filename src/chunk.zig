@@ -55,7 +55,7 @@ pub const Chunk = struct {
     // Are those other ones really needed?
     pub fn addNewConstant(self: *Chunk, value: Value, line: usize) !void {
         const offset = try self.addConstant(value);
-        try self.writeOpCode(OpCode.CONSTANT, line);
+        try self.writeOpCode(.CONSTANT, line);
         try self.writeConstantOffset(offset, line);
     }
 
@@ -72,7 +72,7 @@ test "chunk" {
 
     try std.testing.expect(c.code.items.len == 0);
 
-    try c.writeOpCode(OpCode.RETURN, 123);
+    try c.writeOpCode(.RETURN, 123);
     try std.testing.expect(c.code.items.len == 1);
     try std.testing.expect(c.lines.items.len == 1);
 }

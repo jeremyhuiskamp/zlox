@@ -26,14 +26,14 @@ pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
     };
 
     return switch (op) {
-        c.OpCode.CONSTANT => constantInstruction(chunk, op, offset),
+        .CONSTANT => constantInstruction(chunk, op, offset),
         // zig fmt: off
-        c.OpCode.RETURN,
-        c.OpCode.NEGATE,
-        c.OpCode.ADD,
-        c.OpCode.SUBTRACT,
-        c.OpCode.MULTIPLY,
-        c.OpCode.DIVIDE => simpleInstruction(op, offset),
+        .RETURN,
+        .NEGATE,
+        .ADD,
+        .SUBTRACT,
+        .MULTIPLY,
+        .DIVIDE => simpleInstruction(op, offset),
         // zig fmt: on
     };
 }
@@ -60,7 +60,7 @@ fn constantInstruction(chunk: c.Chunk, op: c.OpCode, offset: usize) usize {
 test "disassemble" {
     var chunk = c.Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try chunk.writeOpCode(c.OpCode.RETURN, 123);
+    try chunk.writeOpCode(.RETURN, 123);
     // Confusingly, printing from the test seems to partially label
     // the outcome as failure, and then again later as success...
     // But the code is untestable except via visually scanning the

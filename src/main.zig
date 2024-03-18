@@ -10,9 +10,9 @@ pub fn main() !void {
     defer c.deinit();
 
     const constant = try c.addConstant(1.2);
-    try c.writeOpCode(chunk.OpCode.OP_CONSTANT, 123);
+    try c.writeOpCode(.CONSTANT, 123);
     try c.writeConstantOffset(constant, 123);
-    try c.writeOpCode(chunk.OpCode.OP_RETURN, 123);
+    try c.writeOpCode(.RETURN, 123);
 
     debug.disassemble(c, "test chunk");
 }
