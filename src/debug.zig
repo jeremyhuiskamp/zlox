@@ -26,15 +26,15 @@ pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
     };
 
     return switch (op) {
-        .CONSTANT => constantInstruction(chunk, op, offset),
-        // zig fmt: off
+        .CONSTANT,
+        => constantInstruction(chunk, op, offset),
         .RETURN,
         .NEGATE,
         .ADD,
         .SUBTRACT,
         .MULTIPLY,
-        .DIVIDE => simpleInstruction(op, offset),
-        // zig fmt: on
+        .DIVIDE,
+        => simpleInstruction(op, offset),
     };
 }
 
@@ -65,5 +65,7 @@ test "disassemble" {
     // the outcome as failure, and then again later as success...
     // But the code is untestable except via visually scanning the
     // output so...
-    disassemble(chunk, "test chunk");
+    if (TRACE_EXECUTION) {
+        disassemble(chunk, "test chunk");
+    }
 }

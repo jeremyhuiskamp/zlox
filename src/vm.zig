@@ -101,56 +101,48 @@ pub const VM = struct {
 
 // Helper to run a chunk of code in a VM.
 const VMTest = struct {
-    const Instruction = union(enum) {
-        value: c.Value,
-        op: c.OpCode,
-    };
-
-    instructions: std.ArrayList(Instruction),
+    chunk: c.Chunk,
+    line: usize,
 
     // Allocates with the test allocator for syntactic convenience.
     // You must call `run()` to clean up later.
     pub fn init() *VMTest {
         var t = std.testing.allocator.create(VMTest) catch unreachable;
-        t.instructions = std.ArrayList(Instruction).init(std.testing.allocator);
+        t.chunk = c.Chunk.init(std.testing.allocator);
+        t.line = 0;
         return t;
     }
 
     pub fn val(self: *VMTest, value: c.Value) *VMTest {
-        self.instructions.append(.{ .value = value }) catch unreachable;
+        self.chunk.addNewConstant(value, self.line) catch unreachable;
+        self.line += 1;
         return self;
     }
 
     pub fn op(self: *VMTest, operation: c.OpCode) *VMTest {
-        self.instructions.append(.{ .op = operation }) catch unreachable;
+        self.chunk.writeOpCode(operation, self.line) catch unreachable;
+        self.line += 1;
         return self;
     }
 
     // de-allocates and must be run exactly once!
     pub fn run(self: *VMTest) !c.Value {
+        defer std.testing.allocator.destroy(self);
+        defer self.chunk.deinit();
+
+        try self.chunk.writeOpCode(.RETURN, self.line);
+
+        if (debug.TRACE_EXECUTION) {
+            std.debug.print("\n====\n", .{});
+        }
         var vm = VM.init();
         defer vm.deinit();
         vm.resetStack();
 
-        var chunk: c.Chunk = c.Chunk.init(std.testing.allocator);
-        defer chunk.deinit();
-
-        _ = self.op(.RETURN);
-
-        for (self.instructions.items, 0..) |instruction, line| {
-            switch (instruction) {
-                .value => |value| try chunk.addNewConstant(value, line),
-                .op => |o| try chunk.writeOpCode(o, line),
-            }
-        }
-
-        self.instructions.deinit();
-        defer std.testing.allocator.destroy(self);
-
-        std.debug.print("\n====\n", .{});
-        const result = vm.interpret(&chunk);
+        const result = vm.interpret(&self.chunk);
         try std.testing.expectEqual(InterpretResult.OK, result);
         try std.testing.expectEqual(1, vm.stack.size());
+
         return vm.stack.pop();
     }
 };
