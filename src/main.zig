@@ -1,7 +1,8 @@
 const std = @import("std");
-const vm = @import("./vm.zig");
-const chunk = @import("./chunk.zig");
+const v = @import("./vm.zig");
+const c = @import("./chunk.zig");
 const debug = @import("./debug.zig");
+const comp = @import("./compile.zig");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -9,7 +10,7 @@ pub fn main() !void {
 
     switch (std.os.argv.len) {
         1 => {
-            try repl();
+            try repl(arena.allocator());
         },
         2 => {
             const filename = std.mem.span(std.os.argv[1]);
@@ -26,22 +27,45 @@ const stdin = std.io.getStdIn().reader();
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
-fn repl() !void {
+fn repl(alloc: std.mem.Allocator) !void {
     var buf: [1024]u8 = undefined;
     while (true) {
         try stdout.print("> ", .{});
         const maybeLine = try stdin.readUntilDelimiterOrEof(&buf, '\n');
         if (maybeLine) |line| {
-            _ = try interpret(line);
+            const result = interpret(alloc, line);
+            std.debug.print("{s}\n", .{@tagName(result)});
         } else {
-            break;
+            std.debug.print("EOF\n", .{});
+            return;
         }
     }
 }
 
-fn interpret(line: []const u8) !vm.InterpretResult {
-    try stdout.print("{s}\n", .{line});
-    return .OK;
+// TODO: move to vm.zig?
+fn interpret(alloc: std.mem.Allocator, line: []const u8) v.InterpretResult {
+    var chunk = c.Chunk.init(alloc);
+    defer chunk.deinit();
+
+    const compileOk = comp.compile(line, &chunk) catch {
+        // TODO: log the error?
+        return .COMPILE_ERROR;
+    };
+    if (!compileOk) {
+        return .COMPILE_ERROR;
+    }
+
+    var vm = v.VM.init();
+    defer vm.deinit();
+
+    vm.resetStack();
+
+    const result = vm.interpret(&chunk);
+    if (result == .OK) {
+        const value = vm.stack.pop();
+        std.debug.print("result = '{d}'\n", .{value});
+    }
+    return result;
 }
 
 fn runFile(alloc: std.mem.Allocator, filename: []const u8) !void {
@@ -50,7 +74,7 @@ fn runFile(alloc: std.mem.Allocator, filename: []const u8) !void {
         std.os.exit(74);
     };
     defer alloc.free(source);
-    const result = try interpret(source);
+    const result = interpret(alloc, source);
 
     switch (result) {
         .OK => {},

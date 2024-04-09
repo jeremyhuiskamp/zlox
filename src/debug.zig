@@ -2,14 +2,17 @@ const std = @import("std");
 const c = @import("./chunk.zig");
 
 pub const TRACE_EXECUTION = true;
+pub const PRINT_CODE = true;
 
 pub fn disassemble(chunk: c.Chunk, name: []const u8) void {
-    std.debug.print("== {s} ==\n", .{name});
+    std.debug.print("--8<-- {s} --8<--\n", .{name});
 
     var offset: usize = 0;
     while (offset < chunk.code.items.len) {
         offset = disassembleInstruction(chunk, offset);
     }
+
+    std.debug.print("-->8-- {s} -->8--\n", .{name});
 }
 
 pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
@@ -26,8 +29,7 @@ pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
     };
 
     return switch (op) {
-        .CONSTANT,
-        => constantInstruction(chunk, op, offset),
+        .CONSTANT => constantInstruction(chunk, op, offset),
         .RETURN,
         .NEGATE,
         .ADD,

@@ -1,7 +1,7 @@
 const std = @import("std");
 const c = @import("./chunk.zig");
 
-const TokenType = enum {
+pub const TokenType = enum {
     LEFT_PAREN,
     RIGHT_PAREN,
     LEFT_BRACE,
@@ -50,13 +50,13 @@ const TokenType = enum {
     EOF,
 };
 
-const Token = struct {
+pub const Token = struct {
     type: TokenType,
     line: usize,
     value: []const u8,
 };
 
-const Scanner = struct {
+pub const Scanner = struct {
     text: []const u8,
     start: usize,
     current: usize,
@@ -99,6 +99,7 @@ const Scanner = struct {
             '-' => return self.makeToken(.MINUS),
             '+' => return self.makeToken(.PLUS),
             ';' => return self.makeToken(.SEMICOLON),
+            '/' => return self.makeToken(.SLASH),
             '*' => return self.makeToken(.STAR),
             '!' => return self.makeToken(if (self.match('=')) .BANG_EQUAL else .BANG),
             '=' => return self.makeToken(if (self.match('=')) .EQUAL_EQUAL else .EQUAL),

@@ -26,7 +26,7 @@ pub const VM = struct {
         };
     }
 
-    fn resetStack(self: *VM) void {
+    pub fn resetStack(self: *VM) void {
         self.stack.reset();
     }
 
@@ -43,6 +43,8 @@ pub const VM = struct {
     fn run(self: *VM) InterpretResult {
         while (true) {
             if (debug.TRACE_EXECUTION) {
+                // indentation is to line up with the third column of the
+                // instruction disassembler:
                 std.debug.print("          stack({d}):", .{self.stack.size()});
                 self.stack.print();
                 std.debug.print("\n", .{});
