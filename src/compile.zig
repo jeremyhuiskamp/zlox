@@ -2,6 +2,8 @@ const std = @import("std");
 const c = @import("./chunk.zig");
 const s = @import("./scanner.zig");
 const debug = @import("./debug.zig");
+const v = @import("./vm.zig");
+const Value = @import("./value.zig").Value;
 
 pub fn compile(source: []const u8, chunk: *c.Chunk) !bool {
     var scanner = s.Scanner.init(source);
@@ -57,7 +59,17 @@ const rules = std.enums.directEnumArrayDefault(s.TokenType, ParseRule, ParseRule
     .PLUS =       .{                            .infix = Parser.binary, .precedence = .TERM },
     .SLASH =      .{                            .infix = Parser.binary, .precedence = .FACTOR },
     .STAR =       .{                            .infix = Parser.binary, .precedence = .FACTOR },
-    .NUMBER =     .{ .prefix = Parser.number, },
+    .NUMBER =     .{ .prefix = Parser.number,   },
+    .FALSE =      .{ .prefix = Parser.literal,  },
+    .TRUE =       .{ .prefix = Parser.literal,  },
+    .BANG =       .{ .prefix = Parser.unary,    },
+    .NIL =        .{ .prefix = Parser.literal,  },
+    .EQUAL_EQUAL = .{                           .infix = Parser.binary, .precedence = .EQUALITY },
+    .BANG_EQUAL = .{                            .infix = Parser.binary, .precedence = .EQUALITY },
+    .GREATER =    .{                            .infix = Parser.binary, .precedence = .COMPARISON },
+    .GREATER_EQUAL = .{                         .infix = Parser.binary, .precedence = .COMPARISON },
+    .LESS =       .{                            .infix = Parser.binary, .precedence = .COMPARISON },
+    .LESS_EQUAL = .{                            .infix = Parser.binary, .precedence = .COMPARISON },
     // zig fmt: on
 });
 
@@ -127,7 +139,7 @@ const Parser = struct {
         try self.compilingChunk.writeOpCode(code, self.previous.line);
     }
 
-    fn emitConstant(self: *Parser, value: c.Value) !void {
+    fn emitConstant(self: *Parser, value: Value) !void {
         // TODO: the book didn't supply this addNewConstant wrapper
         // do we need to do something at a lower level?
         // Ah, in this spot, the book detects running out of space for constants
@@ -154,7 +166,7 @@ const Parser = struct {
 
     fn number(self: *Parser) !void {
         if (std.fmt.parseFloat(f64, self.previous.value)) |value| {
-            try self.emitConstant(value);
+            try self.emitConstant(.{ .number = value });
         } else |_| {
             self.errorAt(self.previous, "Compiler error: expected number.");
         }
@@ -174,6 +186,7 @@ const Parser = struct {
         try self.parsePrecedence(.UNARY);
         switch (operator.type) {
             .MINUS => try self.emitOpCode(.NEGATE),
+            .BANG => try self.emitOpCode(.NOT),
             else => self.errorAt(operator, "Compiler error: unexpected operator."),
         }
     }
@@ -188,7 +201,31 @@ const Parser = struct {
             .MINUS => try self.emitOpCode(.SUBTRACT),
             .STAR => try self.emitOpCode(.MULTIPLY),
             .SLASH => try self.emitOpCode(.DIVIDE),
+            .BANG_EQUAL => {
+                try self.emitOpCode(.EQUAL);
+                try self.emitOpCode(.NOT);
+            },
+            .EQUAL_EQUAL => try self.emitOpCode(.EQUAL),
+            .GREATER => try self.emitOpCode(.GREATER),
+            .GREATER_EQUAL => {
+                try self.emitOpCode(.LESS);
+                try self.emitOpCode(.NOT);
+            },
+            .LESS => try self.emitOpCode(.LESS),
+            .LESS_EQUAL => {
+                try self.emitOpCode(.GREATER);
+                try self.emitOpCode(.NOT);
+            },
             else => self.errorAt(operator, "Compiler error: unexpected operator."),
+        }
+    }
+
+    fn literal(self: *Parser) !void {
+        switch (self.previous.type) {
+            .FALSE => try self.emitOpCode(.FALSE),
+            .TRUE => try self.emitOpCode(.TRUE),
+            .NIL => try self.emitOpCode(.NIL),
+            else => self.errorAt(self.previous, "Compiler error: unexpected literal."),
         }
     }
 
@@ -276,4 +313,31 @@ test "parse another non-trivial expression" {
     try std.testing.expect(compileOk);
     // 4 constants + 4 values, 5 operators and 1 return:
     try std.testing.expectEqual(14, chunk.code.items.len);
+}
+
+test "parse boolean" {
+    var chunk = c.Chunk.init(std.testing.allocator);
+    defer chunk.deinit();
+    const compileOk = try compile("true", &chunk);
+    try std.testing.expect(compileOk);
+    // constant and return:
+    try std.testing.expectEqual(2, chunk.code.items.len);
+}
+
+test "parse nil" {
+    var chunk = c.Chunk.init(std.testing.allocator);
+    defer chunk.deinit();
+    const compileOk = try compile("nil", &chunk);
+    try std.testing.expect(compileOk);
+    // constant and return:
+    try std.testing.expectEqual(2, chunk.code.items.len);
+}
+
+test "parse equality and comparison" {
+    var chunk = c.Chunk.init(std.testing.allocator);
+    defer chunk.deinit();
+    const compileOk = try compile("1 < 2 == 3 >= 4", &chunk);
+    try std.testing.expect(compileOk);
+    // 4 constants + 4 values, 2 single operators, 1 double operator and 1 return:
+    try std.testing.expectEqual(13, chunk.code.items.len);
 }

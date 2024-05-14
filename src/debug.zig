@@ -1,8 +1,8 @@
 const std = @import("std");
 const c = @import("./chunk.zig");
 
-pub const TRACE_EXECUTION = true;
-pub const PRINT_CODE = true;
+pub const TRACE_EXECUTION = false;
+pub const PRINT_CODE = false;
 
 pub fn disassemble(chunk: c.Chunk, name: []const u8) void {
     std.debug.print("--8<-- {s} --8<--\n", .{name});
@@ -32,10 +32,17 @@ pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
         .CONSTANT => constantInstruction(chunk, op, offset),
         .RETURN,
         .NEGATE,
+        .NIL,
+        .TRUE,
+        .FALSE,
+        .NOT,
         .ADD,
         .SUBTRACT,
         .MULTIPLY,
         .DIVIDE,
+        .EQUAL,
+        .GREATER,
+        .LESS,
         => simpleInstruction(op, offset),
     };
 }
@@ -47,15 +54,12 @@ fn simpleInstruction(op: c.OpCode, offset: usize) usize {
 
 fn constantInstruction(chunk: c.Chunk, op: c.OpCode, offset: usize) usize {
     const constantOffset = chunk.code.items[offset + 1];
-    std.debug.print("{s: <16} {d: >4} '", .{
+    std.debug.print("{s: <16} {d: >4} '{}'\n", .{
         @tagName(op),
         constantOffset,
+        chunk.constants.items[constantOffset],
     });
 
-    // TODO: crack out to `printValue` per book?
-    std.debug.print("{d}", .{chunk.constants.items[constantOffset]});
-
-    std.debug.print("'\n", .{});
     return offset + 2;
 }
 

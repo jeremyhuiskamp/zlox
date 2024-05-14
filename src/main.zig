@@ -63,7 +63,7 @@ fn interpret(alloc: std.mem.Allocator, line: []const u8) v.InterpretResult {
     const result = vm.interpret(&chunk);
     if (result == .OK) {
         const value = vm.stack.pop();
-        std.debug.print("result = '{d}'\n", .{value});
+        std.debug.print("result = '{any}'\n", .{value});
     }
     return result;
 }

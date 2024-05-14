@@ -2,6 +2,13 @@ const std = @import("std");
 
 pub const OpCode = enum {
     CONSTANT,
+    NIL,
+    TRUE,
+    FALSE,
+    NOT,
+    EQUAL,
+    GREATER,
+    LESS,
     ADD,
     SUBTRACT,
     NEGATE,
@@ -12,7 +19,7 @@ pub const OpCode = enum {
 
 const Code = std.ArrayList(u8);
 const Lines = std.ArrayList(usize);
-pub const Value = f64;
+const Value = @import("./value.zig").Value;
 const Values = std.ArrayList(Value);
 
 pub const Chunk = struct {
@@ -81,9 +88,9 @@ test "chunk values" {
     var c = Chunk.init(std.testing.allocator);
     defer c.deinit();
 
-    const offset = try c.addConstant(5.3);
+    const offset = try c.addConstant(.{ .number = 5.3 });
     try std.testing.expect(offset == 0);
 
-    const offset2 = try c.addConstant(3.4);
+    const offset2 = try c.addConstant(.{ .number = 3.4 });
     try std.testing.expect(offset2 == 1);
 }

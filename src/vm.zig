@@ -2,6 +2,7 @@ const c = @import("./chunk.zig");
 const std = @import("std");
 const debug = @import("./debug.zig");
 const s = @import("./stack.zig");
+const v = @import("./value.zig");
 
 // Would this be more idiomatic as an error set
 // with OK left out?
@@ -12,6 +13,8 @@ pub const InterpretResult = enum {
 };
 
 const STACK_MAX = 256;
+
+const stderr = std.io.getStdErr().writer();
 
 pub const VM = struct {
     chunk: ?*const c.Chunk,
@@ -70,36 +73,81 @@ pub const VM = struct {
                 },
                 .NEGATE => {
                     const p = self.stack.top - 1;
-                    p[0] = -p[0];
-                    // self.stack.push(-self.stack.pop());
+                    switch (p[0]) {
+                        .number => p[0] = .{ .number = -p[0].number },
+                        else => return self.runtimeError("Operand must be a number.", .{}),
+                    }
                 },
-                .ADD => {
+                .ADD => if (!self.binaryOp(add)) return .RUNTIME_ERROR,
+                .SUBTRACT => if (!self.binaryOp(sub)) return .RUNTIME_ERROR,
+                .MULTIPLY => if (!self.binaryOp(mul)) return .RUNTIME_ERROR,
+                .DIVIDE => if (!self.binaryOp(div)) return .RUNTIME_ERROR,
+                .NIL => self.stack.push(.nil),
+                .TRUE => self.stack.push(.{ .boolean = true }),
+                .FALSE => self.stack.push(.{ .boolean = false }),
+                .NOT => {
+                    const p = self.stack.top - 1;
+                    p[0] = .{ .boolean = p[0].isFalsey() };
+                },
+                .EQUAL => {
                     const b = self.stack.pop();
                     const a = self.stack.pop();
-                    self.stack.push(a + b);
+                    self.stack.push(.{ .boolean = a.equal(b) });
                 },
-                .SUBTRACT => {
-                    const b = self.stack.pop();
-                    const a = self.stack.pop();
-                    self.stack.push(a - b);
-                },
-                .MULTIPLY => {
-                    const b = self.stack.pop();
-                    const a = self.stack.pop();
-                    self.stack.push(a * b);
-                },
-                .DIVIDE => {
-                    const b = self.stack.pop();
-                    const a = self.stack.pop();
-                    self.stack.push(a / b);
-                },
+                .GREATER => if (!self.binaryOp(greater)) return .RUNTIME_ERROR,
+                .LESS => if (!self.binaryOp(less)) return .RUNTIME_ERROR,
             }
         }
+        return .RUNTIME_ERROR;
+    }
+
+    // TODO: if we can turn .RUNTIME_ERROR into an error type, we can make
+    // this function easier to use via try.
+    fn binaryOp(self: *VM, comptime BinaryFunc: anytype) bool {
+        const b = self.stack.pop();
+        const a = self.stack.pop();
+
+        if (!a.is(.number) or !b.is(.number)) {
+            _ = self.runtimeError("Operands must be numbers.", .{});
+            return false;
+        }
+
+        const resultValue = BinaryFunc(a.number, b.number);
+        const resultType = @TypeOf(resultValue);
+        self.stack.push(if (resultType == f64) .{ .number = resultValue } else .{ .boolean = resultValue });
+
+        return true;
+    }
+
+    fn runtimeError(self: *VM, comptime format: []const u8, args: anytype) InterpretResult {
+        stderr.print(format, args) catch unreachable;
+        const instruction = self.ipAsOffset() - 1;
+        const line = self.chunk.?.lines.items[instruction];
+        stderr.print(" [line {d}] in script\n", .{line}) catch unreachable;
         return InterpretResult.RUNTIME_ERROR;
     }
 
     pub fn deinit(_: *VM) void {}
 };
+
+inline fn add(x: f64, y: f64) f64 {
+    return x + y;
+}
+inline fn mul(x: f64, y: f64) f64 {
+    return x * y;
+}
+inline fn sub(x: f64, y: f64) f64 {
+    return x - y;
+}
+inline fn div(x: f64, y: f64) f64 {
+    return x / y;
+}
+inline fn greater(x: f64, y: f64) bool {
+    return x > y;
+}
+inline fn less(x: f64, y: f64) bool {
+    return x < y;
+}
 
 // Helper to run a chunk of code in a VM.
 const VMTest = struct {
@@ -115,10 +163,22 @@ const VMTest = struct {
         return t;
     }
 
-    pub fn val(self: *VMTest, value: c.Value) *VMTest {
+    fn constant(self: *VMTest, value: v.Value) *VMTest {
         self.chunk.addNewConstant(value, self.line) catch unreachable;
         self.line += 1;
         return self;
+    }
+
+    pub fn number(self: *VMTest, value: f64) *VMTest {
+        return self.constant(.{ .number = value });
+    }
+
+    pub fn boolean(self: *VMTest, value: bool) *VMTest {
+        return self.constant(.{ .boolean = value });
+    }
+
+    pub fn nil(self: *VMTest) *VMTest {
+        return self.constant(.nil);
     }
 
     pub fn op(self: *VMTest, operation: c.OpCode) *VMTest {
@@ -128,7 +188,7 @@ const VMTest = struct {
     }
 
     // de-allocates and must be run exactly once!
-    pub fn run(self: *VMTest) !c.Value {
+    fn execute(self: *VMTest) !v.Value {
         defer std.testing.allocator.destroy(self);
         defer self.chunk.deinit();
 
@@ -147,60 +207,170 @@ const VMTest = struct {
 
         return vm.stack.pop();
     }
+
+    pub fn expectNumber(self: *VMTest, expected: f64) !void {
+        const value = try self.execute();
+        try std.testing.expect(value.is(.number));
+        try std.testing.expectEqual(expected, value.number);
+    }
+
+    pub fn expectBool(self: *VMTest, expected: bool) !void {
+        const value = try self.execute();
+        try std.testing.expect(value.is(.boolean));
+        try std.testing.expectEqual(expected, value.boolean);
+    }
+
+    pub fn expectNil(self: *VMTest) !void {
+        const value = try self.execute();
+        try std.testing.expect(value.is(.nil));
+    }
+
+    // TODO: deduplicate with `executeOk`
+    // Difficult right now because of cleanup.  Easier once we change compile
+    // and runtime errors into zig errors.
+    pub fn expectRuntimeError(self: *VMTest) !void {
+        defer std.testing.allocator.destroy(self);
+        defer self.chunk.deinit();
+
+        try self.chunk.writeOpCode(.RETURN, self.line);
+
+        if (debug.TRACE_EXECUTION) {
+            std.debug.print("\n====\n", .{});
+        }
+        var vm = VM.init();
+        defer vm.deinit();
+        vm.resetStack();
+
+        const result = vm.interpret(&self.chunk);
+        try std.testing.expectEqual(InterpretResult.RUNTIME_ERROR, result);
+    }
 };
 
 test "interpret negate" {
-    const r = VMTest.init()
-        .val(5.3)
+    try VMTest.init()
+        .number(5.3)
         .op(.NEGATE)
-        .run();
-    try std.testing.expectEqual(-5.3, r);
+        .expectNumber(-5.3);
 }
 
 test "interpret add" {
-    const r = VMTest.init()
-        .val(5.3)
-        .val(1.2)
+    try VMTest.init()
+        .number(5.3)
+        .number(1.2)
         .op(.ADD)
-        .run();
-    try std.testing.expectEqual(6.5, r);
+        .expectNumber(6.5);
 }
 
 test "interpret subtract" {
-    const r = VMTest.init()
-        .val(5.3)
-        .val(1.2)
+    try VMTest.init()
+        .number(5.3)
+        .number(1.2)
         .op(.SUBTRACT)
-        .run();
-    try std.testing.expectEqual(4.1, r);
+        .expectNumber(4.1);
 }
 
 test "interpret multiply" {
-    const r = VMTest.init()
-        .val(2.0)
-        .val(3.0)
+    try VMTest.init()
+        .number(2.0)
+        .number(3.0)
         .op(.MULTIPLY)
-        .run();
-    try std.testing.expectEqual(6.0, r);
+        .expectNumber(6.0);
 }
 
 test "interpret divide" {
-    const r = VMTest.init()
-        .val(6.0)
-        .val(3.0)
+    try VMTest.init()
+        .number(6.0)
+        .number(3.0)
         .op(.DIVIDE)
-        .run();
-    try std.testing.expectEqual(2.0, r);
+        .expectNumber(2.0);
 }
 
 test "interpret longer expression" {
-    const r = VMTest.init()
-        .val(2.2)
-        .val(3.4)
+    try VMTest.init()
+        .number(2.2)
+        .number(3.4)
         .op(.ADD)
-        .val(5.6)
+        .number(5.6)
         .op(.DIVIDE)
         .op(.NEGATE)
-        .run();
-    try std.testing.expectEqual(-1.0, r);
+        .expectNumber(-1.0);
+}
+
+test "interpret nil" {
+    try VMTest.init()
+        .nil()
+        .expectNil();
+}
+
+test "interpret boolean" {
+    try VMTest.init()
+        .boolean(true)
+        .expectBool(true);
+
+    try VMTest.init()
+        .boolean(false)
+        .expectBool(false);
+}
+
+test "not boolean" {
+    try VMTest.init()
+        .boolean(false)
+        .op(.NOT)
+        .expectBool(true);
+
+    try VMTest.init()
+        .boolean(true)
+        .op(.NOT)
+        .expectBool(false);
+}
+
+test "truthiness" {
+    try VMTest.init()
+        .number(5.3)
+        .op(.NOT)
+        .expectBool(false);
+
+    try VMTest.init()
+        .nil()
+        .op(.NOT)
+        .expectBool(true);
+}
+
+test "can't negate a boolean" {
+    try VMTest.init()
+        .boolean(false)
+        .op(.NEGATE)
+        .expectRuntimeError();
+}
+
+test "comparison and equality" {
+    try VMTest.init()
+        .number(5.3)
+        .number(5.3)
+        .op(.EQUAL)
+        .expectBool(true);
+
+    try VMTest.init()
+        .number(5.3)
+        .number(5.4)
+        .op(.EQUAL)
+        .expectBool(false);
+
+    try VMTest.init()
+        .number(5.3)
+        .number(5.2)
+        .op(.GREATER)
+        .expectBool(true);
+
+    try VMTest.init()
+        .number(5.2)
+        .number(5.3)
+        .op(.GREATER)
+        .expectBool(false);
+
+    try VMTest.init()
+        .number(5.2)
+        .number(5.3)
+        .op(.LESS)
+        .expectBool(true);
 }
