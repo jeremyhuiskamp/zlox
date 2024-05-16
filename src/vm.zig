@@ -2,7 +2,7 @@ const std = @import("std");
 const Chunk = @import("./chunk.zig").Chunk;
 const OpCode = @import("./chunk.zig").OpCode;
 const debug = @import("./debug.zig");
-const Stack = @import("./stack.zig").Stack;
+const Stack = @import("./Stack.zig");
 const Value = @import("./value.zig").Value;
 
 // Would this be more idiomatic as an error set
