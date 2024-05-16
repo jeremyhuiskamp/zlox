@@ -1,20 +1,21 @@
 const std = @import("std");
-const c = @import("./chunk.zig");
-const v = @import("./vm.zig");
-const val = @import("./value.zig");
-const comp = @import("./compile.zig");
+const Chunk = @import("./chunk.zig").Chunk;
+const VM = @import("./vm.zig").VM;
+const InterpretResult = @import("./vm.zig").InterpretResult;
+const Value = @import("./value.zig").Value;
+const compile = @import("./compile.zig").compile;
 const debug = @import("./debug.zig");
 
-fn evaluate(source: []const u8) !val.Value {
-    var chunk = c.Chunk.init(std.testing.allocator);
+fn evaluate(source: []const u8) !Value {
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
 
-    const compileOk = try comp.compile(source, &chunk);
+    const compileOk = try compile(source, &chunk);
     if (!compileOk) {
         return error.CompileError;
     }
 
-    var vm = v.VM.init();
+    var vm = VM.init();
     defer vm.deinit();
     vm.resetStack();
 
@@ -22,7 +23,7 @@ fn evaluate(source: []const u8) !val.Value {
         std.debug.print("\n====\n", .{});
     }
     const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(v.InterpretResult.OK, result);
+    try std.testing.expectEqual(InterpretResult.OK, result);
     try std.testing.expectEqual(1, vm.stack.size());
 
     return vm.stack.pop();
@@ -31,9 +32,9 @@ fn evaluate(source: []const u8) !val.Value {
 fn expect(source: []const u8, comptime expected: anytype) !void {
     const got = try evaluate(source);
     switch (@TypeOf(expected)) {
-        comptime_float => try std.testing.expectEqual(val.Value{ .number = expected }, got),
-        bool => try std.testing.expectEqual(val.Value{ .boolean = expected }, got),
-        void => try std.testing.expectEqual(val.Value{ .nil = {} }, got),
+        comptime_float => try std.testing.expectEqual(Value{ .number = expected }, got),
+        bool => try std.testing.expectEqual(Value{ .boolean = expected }, got),
+        void => try std.testing.expectEqual(Value{ .nil = {} }, got),
         else => @compileError("unsupported type"),
     }
 }

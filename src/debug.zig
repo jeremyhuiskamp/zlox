@@ -1,10 +1,11 @@
 const std = @import("std");
-const c = @import("./chunk.zig");
+const Chunk = @import("./chunk.zig").Chunk;
+const OpCode = @import("./chunk.zig").OpCode;
 
 pub const TRACE_EXECUTION = false;
 pub const PRINT_CODE = false;
 
-pub fn disassemble(chunk: c.Chunk, name: []const u8) void {
+pub fn disassemble(chunk: Chunk, name: []const u8) void {
     std.debug.print("--8<-- {s} --8<--\n", .{name});
 
     var offset: usize = 0;
@@ -15,7 +16,7 @@ pub fn disassemble(chunk: c.Chunk, name: []const u8) void {
     std.debug.print("-->8-- {s} -->8--\n", .{name});
 }
 
-pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
+pub fn disassembleInstruction(chunk: Chunk, offset: usize) usize {
     std.debug.print("{d:0>4} ", .{offset});
     if (offset > 0 and chunk.lines.items[offset] == chunk.lines.items[offset - 1]) {
         std.debug.print("   | ", .{});
@@ -23,7 +24,7 @@ pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
         std.debug.print("{d: >4} ", .{chunk.lines.items[offset]});
     }
 
-    const op: c.OpCode = std.meta.intToEnum(c.OpCode, chunk.code.items[offset]) catch {
+    const op: OpCode = std.meta.intToEnum(OpCode, chunk.code.items[offset]) catch {
         std.debug.print("unknown opcode: {d}\n", .{chunk.code.items[offset]});
         return offset + 1;
     };
@@ -47,12 +48,12 @@ pub fn disassembleInstruction(chunk: c.Chunk, offset: usize) usize {
     };
 }
 
-fn simpleInstruction(op: c.OpCode, offset: usize) usize {
+fn simpleInstruction(op: OpCode, offset: usize) usize {
     std.debug.print("{s}\n", .{@tagName(op)});
     return offset + 1;
 }
 
-fn constantInstruction(chunk: c.Chunk, op: c.OpCode, offset: usize) usize {
+fn constantInstruction(chunk: Chunk, op: OpCode, offset: usize) usize {
     const constantOffset = chunk.code.items[offset + 1];
     std.debug.print("{s: <16} {d: >4} '{}'\n", .{
         @tagName(op),
@@ -64,7 +65,7 @@ fn constantInstruction(chunk: c.Chunk, op: c.OpCode, offset: usize) usize {
 }
 
 test "disassemble" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     try chunk.writeOpCode(.RETURN, 123);
     // Confusingly, printing from the test seems to partially label

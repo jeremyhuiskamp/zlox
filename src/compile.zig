@@ -1,12 +1,14 @@
 const std = @import("std");
-const c = @import("./chunk.zig");
-const s = @import("./scanner.zig");
+const Chunk = @import("./chunk.zig").Chunk;
+const OpCode = @import("./chunk.zig").OpCode;
+const Scanner = @import("./scanner.zig").Scanner;
+const Token = @import("./scanner.zig").Token;
+const TokenType = @import("./scanner.zig").TokenType;
 const debug = @import("./debug.zig");
-const v = @import("./vm.zig");
 const Value = @import("./value.zig").Value;
 
-pub fn compile(source: []const u8, chunk: *c.Chunk) !bool {
-    var scanner = s.Scanner.init(source);
+pub fn compile(source: []const u8, chunk: *Chunk) !bool {
+    var scanner = Scanner.init(source);
     var parser = Parser.init(&scanner, chunk);
     parser.advance();
     try parser.expression();
@@ -52,7 +54,7 @@ const ParseRule = struct {
     precedence: Precedence = .NONE,
 };
 
-const rules = std.enums.directEnumArrayDefault(s.TokenType, ParseRule, ParseRule{}, 0, .{
+const rules = std.enums.directEnumArrayDefault(TokenType, ParseRule, ParseRule{}, 0, .{
     // zig fmt: off
     .LEFT_PAREN = .{ .prefix = Parser.grouping, },
     .MINUS =      .{ .prefix = Parser.unary,    .infix = Parser.binary, .precedence = .TERM },
@@ -73,19 +75,19 @@ const rules = std.enums.directEnumArrayDefault(s.TokenType, ParseRule, ParseRule
     // zig fmt: on
 });
 
-fn parseRuleFor(tokenType: s.TokenType) *const ParseRule {
+fn parseRuleFor(tokenType: TokenType) *const ParseRule {
     return &rules[@intFromEnum(tokenType)];
 }
 
 const Parser = struct {
-    scanner: *s.Scanner,
-    current: s.Token,
-    previous: s.Token,
+    scanner: *Scanner,
+    current: Token,
+    previous: Token,
     hasError: bool,
     panicMode: bool,
-    compilingChunk: *c.Chunk,
+    compilingChunk: *Chunk,
 
-    fn init(scanner: *s.Scanner, chunk: *c.Chunk) Parser {
+    fn init(scanner: *Scanner, chunk: *Chunk) Parser {
         return Parser{
             .scanner = scanner,
             .current = undefined,
@@ -109,7 +111,7 @@ const Parser = struct {
         }
     }
 
-    fn consume(self: *Parser, tokenType: s.TokenType, message: []const u8) void {
+    fn consume(self: *Parser, tokenType: TokenType, message: []const u8) void {
         if (self.current.type == tokenType) {
             self.advance();
             return;
@@ -117,7 +119,7 @@ const Parser = struct {
         self.errorAt(self.current, message);
     }
 
-    fn errorAt(self: *Parser, token: s.Token, message: []const u8) void {
+    fn errorAt(self: *Parser, token: Token, message: []const u8) void {
         if (self.panicMode) return;
         self.panicMode = true;
 
@@ -133,7 +135,7 @@ const Parser = struct {
         self.hasError = true;
     }
 
-    fn emitOpCode(self: *Parser, code: c.OpCode) !void {
+    fn emitOpCode(self: *Parser, code: OpCode) !void {
         // NB: previous is undefined if there was no code and we're just emiting
         // a RETURN here.  Relying on the parser not accepting empty source.
         try self.compilingChunk.writeOpCode(code, self.previous.line);
@@ -251,7 +253,7 @@ const Parser = struct {
 };
 
 test "parse empty content" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("", &chunk);
     // expression required:
@@ -259,14 +261,14 @@ test "parse empty content" {
 }
 
 test "parse constant" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("1", &chunk);
     try std.testing.expect(compileOk);
 }
 
 test "parse with scanner error" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("~", &chunk);
     try std.testing.expect(!compileOk);
@@ -274,7 +276,7 @@ test "parse with scanner error" {
 
 test "rules lookup" {
     // a configured case:
-    const lparenRule = rules[@intFromEnum(s.TokenType.LEFT_PAREN)];
+    const lparenRule = rules[@intFromEnum(TokenType.LEFT_PAREN)];
     try std.testing.expect(lparenRule.prefix != null);
     try std.testing.expect(lparenRule.infix == null);
     try std.testing.expect(lparenRule.precedence == .NONE);
@@ -287,7 +289,7 @@ test "rules lookup" {
 }
 
 test "parse non-trival expression" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("1 + 2 * (3 + 4)", &chunk);
     try std.testing.expect(compileOk);
@@ -300,14 +302,14 @@ test "parse non-trival expression" {
 }
 
 test "parse error" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("1 +", &chunk);
     try std.testing.expect(!compileOk);
 }
 
 test "parse another non-trivial expression" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("(-1 + 2) * 3 - -4", &chunk);
     try std.testing.expect(compileOk);
@@ -316,7 +318,7 @@ test "parse another non-trivial expression" {
 }
 
 test "parse boolean" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("true", &chunk);
     try std.testing.expect(compileOk);
@@ -325,7 +327,7 @@ test "parse boolean" {
 }
 
 test "parse nil" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("nil", &chunk);
     try std.testing.expect(compileOk);
@@ -334,7 +336,7 @@ test "parse nil" {
 }
 
 test "parse equality and comparison" {
-    var chunk = c.Chunk.init(std.testing.allocator);
+    var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
     const compileOk = try compile("1 < 2 == 3 >= 4", &chunk);
     try std.testing.expect(compileOk);

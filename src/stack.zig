@@ -1,5 +1,4 @@
 const std = @import("std");
-const c = @import("./chunk.zig");
 const Value = @import("./value.zig").Value;
 
 const STACK_MAX = 256;

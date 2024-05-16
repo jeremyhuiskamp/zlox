@@ -1,8 +1,9 @@
-const c = @import("./chunk.zig");
 const std = @import("std");
+const Chunk = @import("./chunk.zig").Chunk;
+const OpCode = @import("./chunk.zig").OpCode;
 const debug = @import("./debug.zig");
-const s = @import("./stack.zig");
-const v = @import("./value.zig");
+const Stack = @import("./stack.zig").Stack;
+const Value = @import("./value.zig").Value;
 
 // Would this be more idiomatic as an error set
 // with OK left out?
@@ -17,15 +18,15 @@ const STACK_MAX = 256;
 const stderr = std.io.getStdErr().writer();
 
 pub const VM = struct {
-    chunk: ?*const c.Chunk,
+    chunk: ?*const Chunk,
     ip: ?[*]u8,
-    stack: s.Stack,
+    stack: Stack,
 
     pub fn init() VM {
         return VM{
             .chunk = null,
             .ip = null,
-            .stack = s.Stack.init(),
+            .stack = Stack.init(),
         };
     }
 
@@ -33,7 +34,7 @@ pub const VM = struct {
         self.stack.reset();
     }
 
-    pub fn interpret(self: *VM, chunk: *const c.Chunk) InterpretResult {
+    pub fn interpret(self: *VM, chunk: *const Chunk) InterpretResult {
         self.chunk = chunk;
         self.ip = chunk.code.items.ptr;
         return self.run();
@@ -56,7 +57,7 @@ pub const VM = struct {
                     self.ipAsOffset(),
                 );
             }
-            const instruction: c.OpCode = @enumFromInt(self.ip.?[0]);
+            const instruction: OpCode = @enumFromInt(self.ip.?[0]);
             self.ip.? += 1;
             switch (instruction) {
                 .RETURN => {
@@ -151,19 +152,19 @@ inline fn less(x: f64, y: f64) bool {
 
 // Helper to run a chunk of code in a VM.
 const VMTest = struct {
-    chunk: c.Chunk,
+    chunk: Chunk,
     line: usize,
 
     // Allocates with the test allocator for syntactic convenience.
-    // You must call `run()` to clean up later.
+    // You must call one of `expect*()` to clean up later.
     pub fn init() *VMTest {
         var t = std.testing.allocator.create(VMTest) catch unreachable;
-        t.chunk = c.Chunk.init(std.testing.allocator);
+        t.chunk = Chunk.init(std.testing.allocator);
         t.line = 0;
         return t;
     }
 
-    fn constant(self: *VMTest, value: v.Value) *VMTest {
+    fn constant(self: *VMTest, value: Value) *VMTest {
         self.chunk.addNewConstant(value, self.line) catch unreachable;
         self.line += 1;
         return self;
@@ -181,14 +182,14 @@ const VMTest = struct {
         return self.constant(.nil);
     }
 
-    pub fn op(self: *VMTest, operation: c.OpCode) *VMTest {
+    pub fn op(self: *VMTest, operation: OpCode) *VMTest {
         self.chunk.writeOpCode(operation, self.line) catch unreachable;
         self.line += 1;
         return self;
     }
 
     // de-allocates and must be run exactly once!
-    fn execute(self: *VMTest) !v.Value {
+    fn execute(self: *VMTest) !Value {
         defer std.testing.allocator.destroy(self);
         defer self.chunk.deinit();
 

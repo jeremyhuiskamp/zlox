@@ -1,8 +1,9 @@
 const std = @import("std");
-const v = @import("./vm.zig");
-const c = @import("./chunk.zig");
+const VM = @import("./vm.zig").VM;
+const InterpretResult = @import("./vm.zig").InterpretResult;
+const Chunk = @import("./chunk.zig").Chunk;
 const debug = @import("./debug.zig");
-const comp = @import("./compile.zig");
+const compile = @import("./compile.zig").compile;
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -43,11 +44,11 @@ fn repl(alloc: std.mem.Allocator) !void {
 }
 
 // TODO: move to vm.zig?
-fn interpret(alloc: std.mem.Allocator, line: []const u8) v.InterpretResult {
-    var chunk = c.Chunk.init(alloc);
+fn interpret(alloc: std.mem.Allocator, line: []const u8) InterpretResult {
+    var chunk = Chunk.init(alloc);
     defer chunk.deinit();
 
-    const compileOk = comp.compile(line, &chunk) catch {
+    const compileOk = compile(line, &chunk) catch {
         // TODO: log the error?
         return .COMPILE_ERROR;
     };
@@ -55,7 +56,7 @@ fn interpret(alloc: std.mem.Allocator, line: []const u8) v.InterpretResult {
         return .COMPILE_ERROR;
     }
 
-    var vm = v.VM.init();
+    var vm = VM.init();
     defer vm.deinit();
 
     vm.resetStack();

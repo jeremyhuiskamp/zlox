@@ -1,5 +1,4 @@
 const std = @import("std");
-const c = @import("./chunk.zig");
 
 pub const TokenType = enum {
     LEFT_PAREN,
