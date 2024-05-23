@@ -52,7 +52,7 @@ fn repl(alloc: std.mem.Allocator) !void {
                 std.debug.print("{s}\n", .{@errorName(err)});
             }
         } else {
-            std.debug.print("EOF\n", .{});
+            std.debug.print("\nEOF\n", .{});
             return;
         }
     }
