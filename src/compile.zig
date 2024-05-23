@@ -43,9 +43,6 @@ const Precedence = enum {
     }
 };
 
-// TODO: don't dupe this with main.zig?
-const stderr = std.io.getStdErr().writer();
-
 const ParseFn = *const fn (*Parser) anyerror!void;
 
 const ParseRule = struct {
@@ -123,15 +120,16 @@ const Parser = struct {
         if (self.panicMode) return;
         self.panicMode = true;
 
-        stderr.print("[line {}] Error", .{token.line}) catch unreachable;
+        const stderr = std.io.getStdErr().writer();
+        stderr.print("[line {}] Error", .{token.line}) catch {};
         if (token.type == .EOF) {
             stderr.print(" at end", .{}) catch unreachable;
         } else if (token.type == .ERROR) {
             // nothing
         } else {
-            stderr.print(" at '{s}'", .{token.value}) catch unreachable;
+            stderr.print(" at '{s}'", .{token.value}) catch {};
         }
-        stderr.print(": {s}\n", .{message}) catch unreachable;
+        stderr.print(": {s}\n", .{message}) catch {};
         self.hasError = true;
     }
 
@@ -196,6 +194,7 @@ const Parser = struct {
     fn binary(self: *Parser) !void {
         const operator = self.previous;
         const rule = parseRuleFor(operator.type);
+        // TODO: assert that there is a precedence?
         try self.parsePrecedence(rule.precedence.higher());
 
         switch (operator.type) {

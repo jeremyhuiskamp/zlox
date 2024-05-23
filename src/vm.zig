@@ -13,15 +13,14 @@ pub const InterpretResult = enum {
     RUNTIME_ERROR,
 };
 
-const STACK_MAX = 256;
-
-const stderr = std.io.getStdErr().writer();
-
 pub const VM = struct {
     chunk: ?*const Chunk,
     ip: ?[*]u8,
     stack: Stack,
 
+    // Creates an empty VM and returns it on the stack.
+    // You must call resetStack() after this, and then not copy/move the VM
+    // afterwards, because the stack has a self-referential pointer.
     pub fn init() VM {
         return VM{
             .chunk = null,
@@ -42,6 +41,10 @@ pub const VM = struct {
 
     fn ipAsOffset(self: *VM) usize {
         return @intFromPtr(self.ip.?) - @intFromPtr(self.chunk.?.code.items.ptr);
+    }
+
+    fn lineOfPreviousInstruction(self: *VM) usize {
+        return self.chunk.?.lines.items[self.ipAsOffset() - 1];
     }
 
     fn run(self: *VM) InterpretResult {
@@ -121,10 +124,10 @@ pub const VM = struct {
     }
 
     fn runtimeError(self: *VM, comptime format: []const u8, args: anytype) InterpretResult {
-        stderr.print(format, args) catch unreachable;
-        const instruction = self.ipAsOffset() - 1;
-        const line = self.chunk.?.lines.items[instruction];
-        stderr.print(" [line {d}] in script\n", .{line}) catch unreachable;
+        const stderr = std.io.getStdErr().writer();
+        stderr.print(format, args) catch {};
+        const line = self.lineOfPreviousInstruction();
+        stderr.print(" [line {d}] in script\n", .{line}) catch {};
         return InterpretResult.RUNTIME_ERROR;
     }
 
