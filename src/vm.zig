@@ -5,12 +5,9 @@ const debug = @import("./debug.zig");
 const Stack = @import("./Stack.zig");
 const Value = @import("./value.zig").Value;
 
-// Would this be more idiomatic as an error set
-// with OK left out?
-pub const InterpretResult = enum {
-    OK,
-    COMPILE_ERROR,
-    RUNTIME_ERROR,
+pub const InterpretError = error{
+    CompileError,
+    RuntimeError,
 };
 
 pub const VM = struct {
@@ -33,7 +30,7 @@ pub const VM = struct {
         self.stack.reset();
     }
 
-    pub fn interpret(self: *VM, chunk: *const Chunk) InterpretResult {
+    pub fn interpret(self: *VM, chunk: *const Chunk) InterpretError!void {
         self.chunk = chunk;
         self.ip = chunk.code.items.ptr;
         return self.run();
@@ -47,7 +44,7 @@ pub const VM = struct {
         return self.chunk.?.lines.items[self.ipAsOffset() - 1];
     }
 
-    fn run(self: *VM) InterpretResult {
+    fn run(self: *VM) InterpretError!void {
         while (true) {
             if (debug.TRACE_EXECUTION) {
                 // indentation is to line up with the third column of the
@@ -67,7 +64,7 @@ pub const VM = struct {
                     // book pops and prints here, but I want to
                     // access the value, so we'll just pop from
                     // the caller...
-                    return InterpretResult.OK;
+                    return;
                 },
                 .CONSTANT => {
                     const constant_offset = self.ip.?[0];
@@ -82,10 +79,10 @@ pub const VM = struct {
                         else => return self.runtimeError("Operand must be a number.", .{}),
                     }
                 },
-                .ADD => if (!self.binaryOp(add)) return .RUNTIME_ERROR,
-                .SUBTRACT => if (!self.binaryOp(sub)) return .RUNTIME_ERROR,
-                .MULTIPLY => if (!self.binaryOp(mul)) return .RUNTIME_ERROR,
-                .DIVIDE => if (!self.binaryOp(div)) return .RUNTIME_ERROR,
+                .ADD => try self.binaryOp(add),
+                .SUBTRACT => try self.binaryOp(sub),
+                .MULTIPLY => try self.binaryOp(mul),
+                .DIVIDE => try self.binaryOp(div),
                 .NIL => self.stack.push(.nil),
                 .TRUE => self.stack.push(.{ .boolean = true }),
                 .FALSE => self.stack.push(.{ .boolean = false }),
@@ -98,37 +95,32 @@ pub const VM = struct {
                     const a = self.stack.pop();
                     self.stack.push(.{ .boolean = a.equal(b) });
                 },
-                .GREATER => if (!self.binaryOp(greater)) return .RUNTIME_ERROR,
-                .LESS => if (!self.binaryOp(less)) return .RUNTIME_ERROR,
+                .GREATER => try self.binaryOp(greater),
+                .LESS => try self.binaryOp(less),
             }
         }
         return .RUNTIME_ERROR;
     }
 
-    // TODO: if we can turn .RUNTIME_ERROR into an error type, we can make
-    // this function easier to use via try.
-    fn binaryOp(self: *VM, comptime BinaryFunc: anytype) bool {
+    fn binaryOp(self: *VM, comptime BinaryFunc: anytype) InterpretError!void {
         const b = self.stack.pop();
         const a = self.stack.pop();
 
         if (!a.is(.number) or !b.is(.number)) {
-            _ = self.runtimeError("Operands must be numbers.", .{});
-            return false;
+            return self.runtimeError("Operands must be numbers.", .{});
         }
 
         const resultValue = BinaryFunc(a.number, b.number);
         const resultType = @TypeOf(resultValue);
         self.stack.push(if (resultType == f64) .{ .number = resultValue } else .{ .boolean = resultValue });
-
-        return true;
     }
 
-    fn runtimeError(self: *VM, comptime format: []const u8, args: anytype) InterpretResult {
+    fn runtimeError(self: *VM, comptime format: []const u8, args: anytype) InterpretError {
         const stderr = std.io.getStdErr().writer();
         stderr.print(format, args) catch {};
         const line = self.lineOfPreviousInstruction();
         stderr.print(" [line {d}] in script\n", .{line}) catch {};
-        return InterpretResult.RUNTIME_ERROR;
+        return error.RuntimeError;
     }
 
     pub fn deinit(_: *VM) void {}
@@ -205,8 +197,7 @@ const VMTest = struct {
         defer vm.deinit();
         vm.resetStack();
 
-        const result = vm.interpret(&self.chunk);
-        try std.testing.expectEqual(InterpretResult.OK, result);
+        try vm.interpret(&self.chunk);
         try std.testing.expectEqual(1, vm.stack.size());
 
         return vm.stack.pop();
@@ -229,24 +220,9 @@ const VMTest = struct {
         try std.testing.expect(value.is(.nil));
     }
 
-    // TODO: deduplicate with `executeOk`
-    // Difficult right now because of cleanup.  Easier once we change compile
-    // and runtime errors into zig errors.
     pub fn expectRuntimeError(self: *VMTest) !void {
-        defer std.testing.allocator.destroy(self);
-        defer self.chunk.deinit();
-
-        try self.chunk.writeOpCode(.RETURN, self.line);
-
-        if (debug.TRACE_EXECUTION) {
-            std.debug.print("\n====\n", .{});
-        }
-        var vm = VM.init();
-        defer vm.deinit();
-        vm.resetStack();
-
-        const result = vm.interpret(&self.chunk);
-        try std.testing.expectEqual(InterpretResult.RUNTIME_ERROR, result);
+        const result = self.execute();
+        try std.testing.expectError(error.RuntimeError, result);
     }
 };
 

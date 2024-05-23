@@ -1,7 +1,7 @@
 const std = @import("std");
 const Chunk = @import("./chunk.zig").Chunk;
 const VM = @import("./vm.zig").VM;
-const InterpretResult = @import("./vm.zig").InterpretResult;
+const InterpretError = @import("./vm.zig").InterpretError;
 const Value = @import("./value.zig").Value;
 const compile = @import("./compile.zig").compile;
 const debug = @import("./debug.zig");
@@ -10,10 +10,7 @@ fn evaluate(source: []const u8) !Value {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
 
-    const compileOk = try compile(source, &chunk);
-    if (!compileOk) {
-        return error.CompileError;
-    }
+    try compile(source, &chunk);
 
     var vm = VM.init();
     defer vm.deinit();
@@ -22,8 +19,7 @@ fn evaluate(source: []const u8) !Value {
     if (debug.TRACE_EXECUTION) {
         std.debug.print("\n====\n", .{});
     }
-    const result = vm.interpret(&chunk);
-    try std.testing.expectEqual(InterpretResult.OK, result);
+    try vm.interpret(&chunk);
     try std.testing.expectEqual(1, vm.stack.size());
 
     return vm.stack.pop();

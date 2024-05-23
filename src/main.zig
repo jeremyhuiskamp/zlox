@@ -1,6 +1,6 @@
 const std = @import("std");
 const VM = @import("./vm.zig").VM;
-const InterpretResult = @import("./vm.zig").InterpretResult;
+const InterpretError = @import("./vm.zig").InterpretError;
 const Chunk = @import("./chunk.zig").Chunk;
 const debug = @import("./debug.zig");
 const compile = @import("./compile.zig").compile;
@@ -34,8 +34,11 @@ fn repl(alloc: std.mem.Allocator) !void {
         try stdout.print("> ", .{});
         const maybeLine = try stdin.readUntilDelimiterOrEof(&buf, '\n');
         if (maybeLine) |line| {
-            const result = interpret(alloc, line);
-            std.debug.print("{s}\n", .{@tagName(result)});
+            if (interpret(alloc, line)) |_| {
+                std.debug.print("OK\n", .{});
+            } else |err| {
+                std.debug.print("{s}\n", .{@errorName(err)});
+            }
         } else {
             std.debug.print("EOF\n", .{});
             return;
@@ -44,29 +47,21 @@ fn repl(alloc: std.mem.Allocator) !void {
 }
 
 // TODO: move to vm.zig?
-fn interpret(alloc: std.mem.Allocator, line: []const u8) InterpretResult {
+fn interpret(alloc: std.mem.Allocator, line: []const u8) !void {
     var chunk = Chunk.init(alloc);
     defer chunk.deinit();
 
-    const compileOk = compile(line, &chunk) catch {
-        // TODO: log the error?
-        return .COMPILE_ERROR;
-    };
-    if (!compileOk) {
-        return .COMPILE_ERROR;
-    }
+    try compile(line, &chunk);
 
     var vm = VM.init();
     defer vm.deinit();
 
     vm.resetStack();
 
-    const result = vm.interpret(&chunk);
-    if (result == .OK) {
-        const value = vm.stack.pop();
-        std.debug.print("result = '{any}'\n", .{value});
-    }
-    return result;
+    try vm.interpret(&chunk);
+
+    const value = vm.stack.pop();
+    std.debug.print("result = '{any}'\n", .{value});
 }
 
 fn runFile(alloc: std.mem.Allocator, filename: []const u8) !void {
@@ -75,11 +70,13 @@ fn runFile(alloc: std.mem.Allocator, filename: []const u8) !void {
         std.os.exit(74);
     };
     defer alloc.free(source);
-    const result = interpret(alloc, source);
-
-    switch (result) {
-        .OK => {},
-        .COMPILE_ERROR => std.os.exit(65),
-        .RUNTIME_ERROR => std.os.exit(70),
-    }
+    interpret(alloc, source) catch |err| switch (err) {
+        error.CompileError => std.os.exit(65),
+        error.RuntimeError => std.os.exit(70),
+        else => {
+            stderr.print("{s}\n", .{@errorName(err)}) catch {};
+            // TODO: what does the book use for, eg, OutOfMemory?
+            std.os.exit(74);
+        },
+    };
 }

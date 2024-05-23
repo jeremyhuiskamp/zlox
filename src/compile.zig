@@ -7,7 +7,7 @@ const TokenType = @import("./scanner.zig").TokenType;
 const debug = @import("./debug.zig");
 const Value = @import("./value.zig").Value;
 
-pub fn compile(source: []const u8, chunk: *Chunk) !bool {
+pub fn compile(source: []const u8, chunk: *Chunk) !void {
     var scanner = Scanner.init(source);
     var parser = Parser.init(&scanner, chunk);
     parser.advance();
@@ -15,7 +15,7 @@ pub fn compile(source: []const u8, chunk: *Chunk) !bool {
     parser.consume(.EOF, "Expect end of expression.");
     try parser.endCompilation();
 
-    return !parser.hasError;
+    if (parser.hasError) return error.CompileError;
 }
 
 const Precedence = enum {
@@ -251,26 +251,25 @@ const Parser = struct {
     }
 };
 
-test "parse empty content" {
+fn expectCompilationFailure(comptime source: []const u8) !void {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    const compileOk = try compile("", &chunk);
+    try std.testing.expectError(error.CompileError, compile(source, &chunk));
+}
+
+test "parse empty content" {
     // expression required:
-    try std.testing.expect(!compileOk);
+    try expectCompilationFailure("");
 }
 
 test "parse constant" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    const compileOk = try compile("1", &chunk);
-    try std.testing.expect(compileOk);
+    try compile("1", &chunk);
 }
 
 test "parse with scanner error" {
-    var chunk = Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
-    const compileOk = try compile("~", &chunk);
-    try std.testing.expect(!compileOk);
+    try expectCompilationFailure("~");
 }
 
 test "rules lookup" {
@@ -290,8 +289,7 @@ test "rules lookup" {
 test "parse non-trival expression" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    const compileOk = try compile("1 + 2 * (3 + 4)", &chunk);
-    try std.testing.expect(compileOk);
+    try compile("1 + 2 * (3 + 4)", &chunk);
 
     // Seems too invasive to assert on the full format of the compiled
     // code.  We could execute it to get the result, but this is just a
@@ -301,17 +299,13 @@ test "parse non-trival expression" {
 }
 
 test "parse error" {
-    var chunk = Chunk.init(std.testing.allocator);
-    defer chunk.deinit();
-    const compileOk = try compile("1 +", &chunk);
-    try std.testing.expect(!compileOk);
+    try expectCompilationFailure("1 +");
 }
 
 test "parse another non-trivial expression" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    const compileOk = try compile("(-1 + 2) * 3 - -4", &chunk);
-    try std.testing.expect(compileOk);
+    try compile("(-1 + 2) * 3 - -4", &chunk);
     // 4 constants + 4 values, 5 operators and 1 return:
     try std.testing.expectEqual(14, chunk.code.items.len);
 }
@@ -319,8 +313,7 @@ test "parse another non-trivial expression" {
 test "parse boolean" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    const compileOk = try compile("true", &chunk);
-    try std.testing.expect(compileOk);
+    try compile("true", &chunk);
     // constant and return:
     try std.testing.expectEqual(2, chunk.code.items.len);
 }
@@ -328,8 +321,7 @@ test "parse boolean" {
 test "parse nil" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    const compileOk = try compile("nil", &chunk);
-    try std.testing.expect(compileOk);
+    try compile("nil", &chunk);
     // constant and return:
     try std.testing.expectEqual(2, chunk.code.items.len);
 }
@@ -337,8 +329,7 @@ test "parse nil" {
 test "parse equality and comparison" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    const compileOk = try compile("1 < 2 == 3 >= 4", &chunk);
-    try std.testing.expect(compileOk);
+    try compile("1 < 2 == 3 >= 4", &chunk);
     // 4 constants + 4 values, 2 single operators, 1 double operator and 1 return:
     try std.testing.expectEqual(13, chunk.code.items.len);
 }
