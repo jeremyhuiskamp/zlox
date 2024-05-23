@@ -5,6 +5,18 @@ const Chunk = @import("./chunk.zig").Chunk;
 const debug = @import("./debug.zig");
 const compile = @import("./compile.zig").compile;
 
+const ExitReason = enum(u8) {
+    OutOfMemory = 1,
+    Unknown = 10,
+    BadInvocation = 64,
+    CompileError = 65,
+    RuntimeError = 70,
+};
+
+fn die(reason: ExitReason) noreturn {
+    std.os.exit(@intFromEnum(reason));
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -19,7 +31,7 @@ pub fn main() !void {
         },
         else => {
             std.debug.print("usage: zlox [script]\n", .{});
-            std.os.exit(64);
+            die(.BadInvocation);
         },
     }
 }
@@ -70,13 +82,14 @@ fn runFile(alloc: std.mem.Allocator, filename: []const u8) !void {
         std.os.exit(74);
     };
     defer alloc.free(source);
-    interpret(alloc, source) catch |err| switch (err) {
-        error.CompileError => std.os.exit(65),
-        error.RuntimeError => std.os.exit(70),
-        else => {
-            stderr.print("{s}\n", .{@errorName(err)}) catch {};
-            // TODO: what does the book use for, eg, OutOfMemory?
-            std.os.exit(74);
-        },
+    interpret(alloc, source) catch |err| {
+        stderr.print("{s}\n", .{@errorName(err)}) catch {};
+        const reason: ExitReason = switch (err) {
+            error.CompileError => .CompileError,
+            error.RuntimeError => .RuntimeError,
+            error.OutOfMemory => .OutOfMemory,
+            else => .Unknown,
+        };
+        die(reason);
     };
 }
