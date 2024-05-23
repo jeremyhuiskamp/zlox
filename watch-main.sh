@@ -5,6 +5,7 @@
 while : ; do
     zig build run
     build_status=$?
+    echo restarting
     
     # only wait for file changes if the build failed, otherwise we
     # were exiting the repl and probably want to try again immediately:
