@@ -59,13 +59,13 @@ fn repl(alloc: std.mem.Allocator) !void {
 }
 
 // TODO: move to vm.zig?
-fn interpret(alloc: std.mem.Allocator, line: []const u8) !void {
+fn interpret(alloc: std.mem.Allocator, line: []const u8) InterpretError!void {
     var chunk = Chunk.init(alloc);
     defer chunk.deinit();
 
-    try compile(line, &chunk);
+    try compile(line, &chunk, alloc);
 
-    var vm = VM.init();
+    var vm = VM.init(alloc);
     defer vm.deinit();
 
     vm.resetStack();
@@ -88,7 +88,6 @@ fn runFile(alloc: std.mem.Allocator, filename: []const u8) !void {
             error.CompileError => .CompileError,
             error.RuntimeError => .RuntimeError,
             error.OutOfMemory => .OutOfMemory,
-            else => .Unknown,
         };
         die(reason);
     };

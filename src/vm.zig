@@ -4,10 +4,12 @@ const OpCode = @import("./chunk.zig").OpCode;
 const debug = @import("./debug.zig");
 const Stack = @import("./Stack.zig");
 const Value = @import("./value.zig").Value;
+const StringObj = @import("./object.zig").StringObj;
 
 pub const InterpretError = error{
     CompileError,
     RuntimeError,
+    OutOfMemory,
 };
 
 pub const VM = struct {
@@ -15,14 +17,26 @@ pub const VM = struct {
     ip: ?[*]u8,
     stack: Stack,
 
+    alloc: std.mem.Allocator,
+    // Unlike the book:
+    // - only the dynamically calculated strings (the constant
+    //   ones are handled by Chunk)
+    // - we're allocating memory for a container rather than
+    //   inlining a linked list.  This seems cleaner, and we're
+    //   not worried about performance before we get the real
+    //   gc implemented.
+    strings: std.ArrayList(*StringObj),
+
     // Creates an empty VM and returns it on the stack.
     // You must call resetStack() after this, and then not copy/move the VM
     // afterwards, because the stack has a self-referential pointer.
-    pub fn init() VM {
+    pub fn init(alloc: std.mem.Allocator) VM {
         return VM{
             .chunk = null,
             .ip = null,
             .stack = Stack.init(),
+            .alloc = alloc,
+            .strings = std.ArrayList(*StringObj).init(alloc),
         };
     }
 
@@ -79,7 +93,7 @@ pub const VM = struct {
                         else => return self.runtimeError("Operand must be a number.", .{}),
                     }
                 },
-                .ADD => try self.binaryOp(add),
+                .ADD => try self.add(),
                 .SUBTRACT => try self.binaryOp(sub),
                 .MULTIPLY => try self.binaryOp(mul),
                 .DIVIDE => try self.binaryOp(div),
@@ -100,6 +114,24 @@ pub const VM = struct {
             }
         }
         return .RUNTIME_ERROR;
+    }
+
+    fn add(self: *VM) InterpretError!void {
+        const b = self.stack.pop();
+        const a = self.stack.pop();
+        if (a.isObj(.String) and b.isObj(.String)) {
+            const concat = try StringObj.init2(
+                self.alloc,
+                StringObj.from(a.object).value,
+                StringObj.from(b.object).value,
+            );
+            try self.strings.append(concat);
+            self.stack.push(.{ .object = concat.asObj() });
+        } else if (a.is(.number) and b.is(.number)) {
+            self.stack.push(.{ .number = a.number + b.number });
+        } else {
+            return self.runtimeError("Operands must be two numbers or two strings.", .{});
+        }
     }
 
     fn binaryOp(self: *VM, comptime BinaryFunc: anytype) InterpretError!void {
@@ -123,12 +155,14 @@ pub const VM = struct {
         return error.RuntimeError;
     }
 
-    pub fn deinit(_: *VM) void {}
+    pub fn deinit(self: *VM) void {
+        for (self.strings.items) |string| {
+            string.deinit(self.alloc);
+        }
+        self.strings.deinit();
+    }
 };
 
-inline fn add(x: f64, y: f64) f64 {
-    return x + y;
-}
 inline fn mul(x: f64, y: f64) f64 {
     return x * y;
 }
@@ -148,6 +182,7 @@ inline fn less(x: f64, y: f64) bool {
 // Helper to run a chunk of code in a VM.
 const VMTest = struct {
     chunk: Chunk,
+    vm: VM,
     line: usize,
 
     // Allocates with the test allocator for syntactic convenience.
@@ -156,6 +191,7 @@ const VMTest = struct {
         var t = std.testing.allocator.create(VMTest) catch unreachable;
         t.chunk = Chunk.init(std.testing.allocator);
         t.line = 0;
+        t.vm = VM.init(std.testing.allocator);
         return t;
     }
 
@@ -177,50 +213,70 @@ const VMTest = struct {
         return self.constant(.nil);
     }
 
+    pub fn string(self: *VMTest, value: []const u8) *VMTest {
+        const strObj = StringObj.init(std.testing.allocator, value) catch unreachable;
+        return self.constant(.{ .object = strObj.asObj() });
+    }
+
     pub fn op(self: *VMTest, operation: OpCode) *VMTest {
         self.chunk.writeOpCode(operation, self.line) catch unreachable;
         self.line += 1;
         return self;
     }
 
-    // de-allocates and must be run exactly once!
     fn execute(self: *VMTest) !Value {
-        defer std.testing.allocator.destroy(self);
-        defer self.chunk.deinit();
-
         try self.chunk.writeOpCode(.RETURN, self.line);
 
         if (debug.TRACE_EXECUTION) {
             std.debug.print("\n====\n", .{});
         }
-        var vm = VM.init();
-        defer vm.deinit();
-        vm.resetStack();
+        self.vm.resetStack();
+        try self.vm.interpret(&self.chunk);
+        try std.testing.expectEqual(1, self.vm.stack.size());
 
-        try vm.interpret(&self.chunk);
-        try std.testing.expectEqual(1, vm.stack.size());
+        return self.vm.stack.pop();
+    }
 
-        return vm.stack.pop();
+    fn deinit(self: *VMTest) void {
+        self.vm.deinit();
+        self.chunk.deinit();
+        std.testing.allocator.destroy(self);
     }
 
     pub fn expectNumber(self: *VMTest, expected: f64) !void {
+        defer self.deinit();
+
         const value = try self.execute();
         try std.testing.expect(value.is(.number));
         try std.testing.expectEqual(expected, value.number);
     }
 
     pub fn expectBool(self: *VMTest, expected: bool) !void {
+        defer self.deinit();
+
         const value = try self.execute();
         try std.testing.expect(value.is(.boolean));
         try std.testing.expectEqual(expected, value.boolean);
     }
 
     pub fn expectNil(self: *VMTest) !void {
+        defer self.deinit();
+
         const value = try self.execute();
         try std.testing.expect(value.is(.nil));
     }
 
+    pub fn expectString(self: *VMTest, expected: []const u8) !void {
+        defer self.deinit();
+
+        const value = try self.execute();
+        try std.testing.expect(value.isObj(.String));
+        try std.testing.expectEqualStrings(expected, StringObj.from(value.object).value);
+    }
+
     pub fn expectRuntimeError(self: *VMTest) !void {
+        defer self.deinit();
+
         const result = self.execute();
         try std.testing.expectError(error.RuntimeError, result);
     }
@@ -353,4 +409,26 @@ test "comparison and equality" {
         .number(5.3)
         .op(.LESS)
         .expectBool(true);
+}
+
+test "concatenate strings" {
+    try VMTest.init()
+        .string("hello")
+        .string("world")
+        .op(.ADD)
+        .expectString("helloworld");
+}
+
+test "string equality" {
+    try VMTest.init()
+        .string("hello")
+        .string("hello")
+        .op(.EQUAL)
+        .expectBool(true);
+
+    try VMTest.init()
+        .string("hello")
+        .string("world")
+        .op(.EQUAL)
+        .expectBool(false);
 }

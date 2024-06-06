@@ -1,4 +1,6 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const Chunk = @import("./chunk.zig").Chunk;
 const OpCode = @import("./chunk.zig").OpCode;
 const Scanner = @import("./scanner.zig").Scanner;
@@ -6,10 +8,13 @@ const Token = @import("./scanner.zig").Token;
 const TokenType = @import("./scanner.zig").TokenType;
 const debug = @import("./debug.zig");
 const Value = @import("./value.zig").Value;
+const StringObj = @import("./object.zig").StringObj;
 
-pub fn compile(source: []const u8, chunk: *Chunk) !void {
+const CompileError = Parser.Error || error{CompileError};
+
+pub fn compile(source: []const u8, chunk: *Chunk, allocator: Allocator) CompileError!void {
     var scanner = Scanner.init(source);
-    var parser = Parser.init(&scanner, chunk);
+    var parser = Parser.init(&scanner, chunk, allocator);
     parser.advance();
     try parser.expression();
     parser.consume(.EOF, "Expect end of expression.");
@@ -43,7 +48,7 @@ const Precedence = enum {
     }
 };
 
-const ParseFn = *const fn (*Parser) anyerror!void;
+const ParseFn = *const fn (*Parser) Parser.Error!void;
 
 const ParseRule = struct {
     prefix: ?ParseFn = null,
@@ -69,6 +74,7 @@ const rules = std.enums.directEnumArrayDefault(TokenType, ParseRule, ParseRule{}
     .GREATER_EQUAL = .{                         .infix = Parser.binary, .precedence = .COMPARISON },
     .LESS =       .{                            .infix = Parser.binary, .precedence = .COMPARISON },
     .LESS_EQUAL = .{                            .infix = Parser.binary, .precedence = .COMPARISON },
+    .STRING =     .{ .prefix = Parser.string,   },
     // zig fmt: on
 });
 
@@ -83,8 +89,11 @@ const Parser = struct {
     hasError: bool,
     panicMode: bool,
     compilingChunk: *Chunk,
+    allocator: Allocator,
 
-    fn init(scanner: *Scanner, chunk: *Chunk) Parser {
+    const Error = Chunk.Error;
+
+    fn init(scanner: *Scanner, chunk: *Chunk, allocator: Allocator) Parser {
         return Parser{
             .scanner = scanner,
             .current = undefined,
@@ -92,6 +101,7 @@ const Parser = struct {
             .hasError = false,
             .panicMode = false,
             .compilingChunk = chunk,
+            .allocator = allocator,
         };
     }
 
@@ -133,13 +143,13 @@ const Parser = struct {
         self.hasError = true;
     }
 
-    fn emitOpCode(self: *Parser, code: OpCode) !void {
+    fn emitOpCode(self: *Parser, code: OpCode) Error!void {
         // NB: previous is undefined if there was no code and we're just emiting
         // a RETURN here.  Relying on the parser not accepting empty source.
         try self.compilingChunk.writeOpCode(code, self.previous.line);
     }
 
-    fn emitConstant(self: *Parser, value: Value) !void {
+    fn emitConstant(self: *Parser, value: Value) Error!void {
         // TODO: the book didn't supply this addNewConstant wrapper
         // do we need to do something at a lower level?
         // Ah, in this spot, the book detects running out of space for constants
@@ -152,7 +162,7 @@ const Parser = struct {
         try self.compilingChunk.addNewConstant(value, self.previous.line);
     }
 
-    fn endCompilation(self: *Parser) !void {
+    fn endCompilation(self: *Parser) Error!void {
         try self.emitOpCode(.RETURN);
 
         if (debug.PRINT_CODE) {
@@ -164,7 +174,7 @@ const Parser = struct {
         }
     }
 
-    fn number(self: *Parser) !void {
+    fn number(self: *Parser) Error!void {
         if (std.fmt.parseFloat(f64, self.previous.value)) |value| {
             try self.emitConstant(.{ .number = value });
         } else |_| {
@@ -172,16 +182,16 @@ const Parser = struct {
         }
     }
 
-    fn expression(self: *Parser) !void {
+    fn expression(self: *Parser) Error!void {
         try self.parsePrecedence(.ASSIGNMENT);
     }
 
-    fn grouping(self: *Parser) !void {
+    fn grouping(self: *Parser) Error!void {
         try self.expression();
         self.consume(.RIGHT_PAREN, "Expect ')' after expression.");
     }
 
-    fn unary(self: *Parser) !void {
+    fn unary(self: *Parser) Error!void {
         const operator = self.previous;
         try self.parsePrecedence(.UNARY);
         switch (operator.type) {
@@ -191,7 +201,7 @@ const Parser = struct {
         }
     }
 
-    fn binary(self: *Parser) !void {
+    fn binary(self: *Parser) Error!void {
         const operator = self.previous;
         const rule = parseRuleFor(operator.type);
         // TODO: assert that there is a precedence?
@@ -221,7 +231,7 @@ const Parser = struct {
         }
     }
 
-    fn literal(self: *Parser) !void {
+    fn literal(self: *Parser) Error!void {
         switch (self.previous.type) {
             .FALSE => try self.emitOpCode(.FALSE),
             .TRUE => try self.emitOpCode(.TRUE),
@@ -230,7 +240,12 @@ const Parser = struct {
         }
     }
 
-    fn parsePrecedence(self: *Parser, precedence: Precedence) !void {
+    fn string(self: *Parser) Error!void {
+        const strObj = try StringObj.init(self.allocator, self.previous.value);
+        try self.emitConstant(.{ .object = strObj.asObj() });
+    }
+
+    fn parsePrecedence(self: *Parser, precedence: Precedence) Error!void {
         self.advance();
         const prefixRule = parseRuleFor(self.previous.type).prefix;
         if (prefixRule == null) {
@@ -254,7 +269,7 @@ const Parser = struct {
 fn expectCompilationFailure(comptime source: []const u8) !void {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try std.testing.expectError(error.CompileError, compile(source, &chunk));
+    try std.testing.expectError(error.CompileError, compile(source, &chunk, std.testing.allocator));
 }
 
 test "parse empty content" {
@@ -265,7 +280,7 @@ test "parse empty content" {
 test "parse constant" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try compile("1", &chunk);
+    try compile("1", &chunk, std.testing.allocator);
 }
 
 test "parse with scanner error" {
@@ -289,7 +304,7 @@ test "rules lookup" {
 test "parse non-trival expression" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try compile("1 + 2 * (3 + 4)", &chunk);
+    try compile("1 + 2 * (3 + 4)", &chunk, std.testing.allocator);
 
     // Seems too invasive to assert on the full format of the compiled
     // code.  We could execute it to get the result, but this is just a
@@ -305,7 +320,7 @@ test "parse error" {
 test "parse another non-trivial expression" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try compile("(-1 + 2) * 3 - -4", &chunk);
+    try compile("(-1 + 2) * 3 - -4", &chunk, std.testing.allocator);
     // 4 constants + 4 values, 5 operators and 1 return:
     try std.testing.expectEqual(14, chunk.code.items.len);
 }
@@ -313,7 +328,7 @@ test "parse another non-trivial expression" {
 test "parse boolean" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try compile("true", &chunk);
+    try compile("true", &chunk, std.testing.allocator);
     // constant and return:
     try std.testing.expectEqual(2, chunk.code.items.len);
 }
@@ -321,7 +336,7 @@ test "parse boolean" {
 test "parse nil" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try compile("nil", &chunk);
+    try compile("nil", &chunk, std.testing.allocator);
     // constant and return:
     try std.testing.expectEqual(2, chunk.code.items.len);
 }
@@ -329,7 +344,16 @@ test "parse nil" {
 test "parse equality and comparison" {
     var chunk = Chunk.init(std.testing.allocator);
     defer chunk.deinit();
-    try compile("1 < 2 == 3 >= 4", &chunk);
+    try compile("1 < 2 == 3 >= 4", &chunk, std.testing.allocator);
     // 4 constants + 4 values, 2 single operators, 1 double operator and 1 return:
     try std.testing.expectEqual(13, chunk.code.items.len);
+}
+
+test "parse string" {
+    var chunk = Chunk.init(std.testing.allocator);
+    defer chunk.deinit();
+
+    try compile("\"hello compiler\"", &chunk, std.testing.allocator);
+    // constant, value and return:
+    try std.testing.expectEqual(3, chunk.code.items.len);
 }
