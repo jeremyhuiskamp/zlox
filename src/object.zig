@@ -60,27 +60,34 @@ pub const StringObj = struct {
     obj: Obj,
     value: []u8,
 
-    pub fn init(alloc: std.mem.Allocator, value: []const u8) !*StringObj {
-        const ref = try alloc.create(StringObj);
-        errdefer alloc.destroy(ref);
+    // Allocate space for a StringObj plus a value, and point the value slice
+    // to the memory right after the StringObj.  This is meant to function a bit
+    // like c's flexible array members, and saves us from needing to do a
+    // separate allocation for the value.
+    fn make(alloc: std.mem.Allocator, valueSize: usize) !*StringObj {
+        const totalBytesRequired = @sizeOf(StringObj) + valueSize;
+        const mem = try alloc.alignedAlloc(u8, @alignOf(StringObj), totalBytesRequired);
+        const stringObj: *StringObj = @ptrCast(mem);
 
-        ref.obj = .{ .type = .String };
-        ref.value = try alloc.dupe(u8, value);
+        stringObj.obj = .{ .type = .String };
+        stringObj.value = mem[@sizeOf(StringObj)..];
+
+        return stringObj;
+    }
+
+    pub fn init(alloc: std.mem.Allocator, value: []const u8) !*StringObj {
+        const ref = try make(alloc, value.len);
+
+        @memcpy(ref.value, value);
 
         return ref;
     }
 
     pub fn init2(alloc: std.mem.Allocator, value1: []const u8, value2: []const u8) !*StringObj {
-        const ref = try alloc.create(StringObj);
-        errdefer alloc.destroy(ref);
+        const ref = try make(alloc, value1.len + value2.len);
 
-        ref.obj = .{ .type = .String };
-
-        const buf = try alloc.alloc(u8, value1.len + value2.len);
-        @memcpy(buf[0..value1.len], value1);
-        @memcpy(buf[value1.len..], value2);
-
-        ref.value = buf;
+        @memcpy(ref.value[0..value1.len], value1);
+        @memcpy(ref.value[value1.len..], value2);
 
         return ref;
     }
@@ -99,8 +106,14 @@ pub const StringObj = struct {
         // should we hang on to the allocator from init()?
         // It would be convenient, but this struct is supposed to be as small
         // as possible for performance reasons.
-        alloc.free(self.value);
-        alloc.destroy(self);
+
+        // In safe mode (see std.heap.general_purpose_allocator.Config.safety),
+        // we need to free a pointer with the same underlying size and alignment
+        // as we allocated.
+        // Casting magic copied from Allocator.destroy and std.hash_map.HashMapUnmanaged.deallocate
+        const ptr = @as([*]align(@alignOf(StringObj)) u8, @ptrCast(@constCast(self)));
+        const mem = ptr[0 .. @sizeOf(StringObj) + self.value.len];
+        alloc.free(mem);
     }
 };
 
