@@ -59,6 +59,7 @@ pub const Obj = struct {
 pub const StringObj = struct {
     obj: Obj,
     value: []u8,
+    hash: u32,
 
     // Allocate space for a StringObj plus a value, and point the value slice
     // to the memory right after the StringObj.  This is meant to function a bit
@@ -79,6 +80,7 @@ pub const StringObj = struct {
         const ref = try make(alloc, value.len);
 
         @memcpy(ref.value, value);
+        ref.hash = hash(ref.value);
 
         return ref;
     }
@@ -88,8 +90,18 @@ pub const StringObj = struct {
 
         @memcpy(ref.value[0..value1.len], value1);
         @memcpy(ref.value[value1.len..], value2);
+        ref.hash = hash(ref.value);
 
         return ref;
+    }
+
+    fn hash(value: []const u8) u32 {
+        var result: u32 = 0x811c9dc5;
+        for (value) |c| {
+            result ^= c;
+            result *%= 0x01000193;
+        }
+        return result;
     }
 
     pub fn from(obj: *const Obj) *const StringObj {
@@ -156,4 +168,22 @@ test "concatenation" {
     defer strObj2.deinit(std.testing.allocator);
 
     try std.testing.expect(strObj.asObj().equal(strObj2.asObj()));
+}
+
+test "hash" {
+    // some sampling copied from http://www.isthe.com/chongo/src/fnv/test_fnv.c
+    // hashes specified in decimal because that's how the zig test runner prints
+    // them on mismatches, and we have no other way to trace back to the test case.
+    const tests = .{
+        .{ "hello", 1335831723 },
+        .{ "", 2166136261 },
+        .{ "foobar", 3214735720 },
+        .{ "héllö", 4130253622 }, // assume utf-8
+        .{ &[_]u8{ 0x68, 0xc3, 0xa9, 0x6c, 0x6c, 0xc3, 0xb6 }, 4130253622 }, // explicit utf-8
+    };
+    inline for (tests) |t| {
+        const strObj = try StringObj.init(std.testing.allocator, t[0]);
+        defer strObj.deinit(std.testing.allocator);
+        try std.testing.expectEqual(t[1], strObj.hash);
+    }
 }

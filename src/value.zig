@@ -11,6 +11,8 @@ pub const Value = union(ValueType) {
     object: *Obj,
     nil: void,
 
+    pub const NIL: Value = .{ .nil = {} };
+
     pub fn is(self: Value, vtype: ValueType) bool {
         return @as(ValueType, self) == vtype;
     }

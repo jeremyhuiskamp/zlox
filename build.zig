@@ -81,6 +81,7 @@ pub fn build(b: *std.Build) void {
         "src/integration_test.zig",
         "src/object.zig",
         "src/value.zig",
+        "src/table.zig",
     };
     for (files_to_test) |file_to_test| {
         const lib_unit_tests = b.addTest(.{
